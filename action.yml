@@ -1,0 +1,24 @@
+name: Setup Environment Variables
+description: "Set environment variables from a JSON string"
+
+inputs:
+  vars_context:
+    required: true
+    description: "The JSON string containing the environment variables - `toJson(vars)`"
+
+runs:
+  using: composite
+  steps:
+    # https://stackoverflow.com/questions/75646046/passing-all-github-environment-variables-and-secrets-in-a-github-actions-workflo
+    - name: Set env vars from vars context JSON
+      env:
+        VARS_CONTEXT: ${{ inputs.vars_context }}
+      run: |
+        # Pipe the JSON string into jq
+        echo "$VARS_CONTEXT" | 
+        # Convert JSON object into an array of key-value pairs
+        jq -r 'to_entries | 
+        # Map over each key-value pair
+        .[] | 
+        # Format each pair as "KEY=VALUE" and append it all to the environment file
+        "\(.key)=\(.value)"' >> $GITHUB_ENV
