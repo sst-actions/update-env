@@ -1,24 +1,58 @@
-name: Setup Environment Variables
-description: "Set environment variables from a JSON string"
+name: "Update Deployment Status and Add Outputs to Environment"
+
+description: "Update deployment status and add outputs as environment variables when successful."
 
 inputs:
-  vars_context:
+  repository:
+    description: "The repository in the format owner/repo."
     required: true
-    description: "The JSON string containing the environment variables - `toJson(vars)`"
+  token:
+    description: "GitHub token with repo permissions."
+    required: true
+  outputs:
+    description: "The outputs to store in the environment as JSON."
+    required: true
+  stage:
+    description: "The name of the environment (stage) to update."
+    required: true
 
 runs:
-  using: composite
+  using: "composite"
   steps:
-    # https://stackoverflow.com/questions/75646046/passing-all-github-environment-variables-and-secrets-in-a-github-actions-workflo
-    - name: Set env vars from vars context JSON
+    - name: Set Environment Variables
+      shell: bash
       env:
-        VARS_CONTEXT: ${{ inputs.vars_context }}
+        REPO: ${{ inputs.repository }}
+        TOKEN: ${{ inputs.token }}
+        NEW_OUTPUTS: ${{ inputs.outputs }}
+        STAGE: ${{ inputs.stage }}
       run: |
-        # Pipe the JSON string into jq
-        echo "$VARS_CONTEXT" | 
-        # Convert JSON object into an array of key-value pairs
-        jq -r 'to_entries | 
-        # Map over each key-value pair
-        .[] | 
-        # Format each pair as "KEY=VALUE" and append it all to the environment file
-        "\(.key)=\(.value)"' >> $GITHUB_ENV
+        set -e
+
+        # Get SST_OUTPUTS variable (check if it exists)
+        VAR=$(curl -L \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/repos/$REPO/environments/$STAGE/variables/SST_OUTPUTS")
+
+        STRINGIFIED_OUTPUTS=$(echo "$NEW_OUTPUTS" | jq -c '.')
+
+        # if value exists, update it, otherwise create it
+        if [ "$(echo $VAR | jq .name)" == "null" ]; then
+          echo "SST_OUTPUTS variable does not exist. Creating..."
+
+          curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -d "$(jq -n --arg name "SST_OUTPUTS" --arg value "$STRINGIFIED_OUTPUTS" '{name: $name, value: $value}')" \
+            "https://api.github.com/repos/$REPO/environments/$STAGE/variables"
+
+        else
+          echo "SST_OUTPUTS variable exists. Updating..."
+
+          curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -d "$(jq -n --arg name "SST_OUTPUTS" --arg value "$STRINGIFIED_OUTPUTS" '{name: $name, value: $value}')" \
+            "https://api.github.com/repos/$REPO/environments/$STAGE/variables/SST_OUTPUTS"
+          exit 0
+        fi
